@@ -17,6 +17,7 @@ dependencies:
   flutter_image_compress: ^2.2.0
   encrypt: ^5.0.3
   light: ^4.1.0
+  flutter_windowmanager_plus: ^1.0.1
 
 dev_dependencies:
   flutter_test:

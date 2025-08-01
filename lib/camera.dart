@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_windowmanager_plus/flutter_windowmanager_plus.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:light/light.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -29,9 +30,15 @@ class _SecureCameraAppState extends State<SecureCameraApp> {
   void initState() { 
     super.initState();
 
+    _blockScreenshots();
     _requestCamera();
     _initCamera();
     _listenToLightSensor();
+  }
+
+  // BLOCK SCREENSHOT/SCREEN RECORDING
+  Future<void> _blockScreenshots() async {
+    await FlutterWindowManagerPlus.addFlags(FlutterWindowManagerPlus.FLAG_SECURE);
   }
 
   Future<bool> _requestCamera() async {
