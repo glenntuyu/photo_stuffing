@@ -1,9 +1,13 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:camera/camera.dart';
+import 'package:encrypt/encrypt.dart' as encrypt;
 import 'package:flutter/material.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:flutter_windowmanager_plus/flutter_windowmanager_plus.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:light/light.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 class SecureCameraApp extends StatefulWidget {
@@ -25,6 +29,14 @@ class _SecureCameraAppState extends State<SecureCameraApp> {
   double _currentZoom = 1.0;
   double _minZoom = 1.0;
   double _maxZoom = 8.0;
+  
+  Uint8List? _finalImageBytes;
+  double _compressionQuality = 80;
+  String? _encryptedBase64;
+  String? _ivBase64;
+
+  // AES Key for demo (in production, use secure key management)
+  final _aesKey = encrypt.Key.fromUtf8('my32lengthsupersecretnooneknows1');
 
   @override
   void initState() { 
@@ -117,10 +129,20 @@ class _SecureCameraAppState extends State<SecureCameraApp> {
   }
 
   // AUTO DELETE IMAGE FROM MEMORY AFTER UPLOAD
-  void _cleanupImage() {
+  Future<void> _cleanupImage() async {
+    if (_capturedImage != null) {
+    try {
+      await File(_capturedImage!.path).delete();
+    } catch (e) {
+      // File might already be deleted or not exist
+      print('Error deleting captured image: $e');
+    }
+  }
     setState(() {
       _capturedImage = null;
       _galleryImage = null;
+      _finalImageBytes = null;
+      _encryptedBase64 = null;
     });
   }
 
@@ -159,6 +181,35 @@ class _SecureCameraAppState extends State<SecureCameraApp> {
       }
     });
   }
+
+  // COMPRESS AND ENCRYPT IMAGE (CONFIGURABLE COMPRESSION)
+  Future<void> _compressAndEncryptImage() async {
+    File? imageFile;
+    if (_capturedImage != null) {
+      imageFile = File(_capturedImage!.path);
+    } else if (_galleryImage != null) {
+      imageFile = _galleryImage;
+    }
+    if (imageFile == null) return;
+
+    // IMAGE COMPRESSION (CONFIGURABLE)
+    final compressedBytes = await FlutterImageCompress.compressWithFile(
+      imageFile.path,
+      quality: _compressionQuality.toInt(),
+    );
+    if (compressedBytes == null) return;
+
+    // IMAGE ENCRYPTION (AES)
+    final aesIV = encrypt.IV.fromSecureRandom(16);
+    final encrypter = encrypt.Encrypter(encrypt.AES(_aesKey));
+    final encrypted = encrypter.encryptBytes(compressedBytes, iv: aesIV);
+
+    setState(() {
+      _finalImageBytes = compressedBytes;
+      _encryptedBase64 = encrypted.base64;
+      _ivBase64 = aesIV.base64;
+    });
+  }
   
   @override
   Widget build(BuildContext context) {
@@ -174,84 +225,121 @@ class _SecureCameraAppState extends State<SecureCameraApp> {
         ],
       ),
       body: _isCameraReady
-        ? Stack(
+        ? Column(
             children: [
               if (_capturedImage == null && _galleryImage == null)
-                CameraPreview(_controller!)
-              else if (_capturedImage != null)
-                Image.file(File(_capturedImage!.path))
-              else if (_galleryImage != null)
-                Image.file(_galleryImage!),
-              if (_capturedImage == null && _galleryImage == null) ...[
-                Align(
-                  alignment: Alignment.bottomCenter,
-                  child: Padding(
-                    padding: const EdgeInsets.only(bottom: 45),
-                    child:
-                      Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          IconButton(
-                            icon: Icon(Icons.circle_outlined, size: 64, color: Colors.white),
-                            onPressed: _captureImage,
-                          ),
-                          IconButton(
-                            icon: Icon(Icons.camera, size: 48, color: Colors.white),
-                            onPressed: _captureImage,
-                          ),
-                        ]
+                Flexible(
+                  child: Stack(
+                    children: [
+                      CameraPreview(_controller!),
+                      Align(
+                        alignment: Alignment.bottomCenter,
+                        child: Padding(
+                          padding: const EdgeInsets.only(bottom: 45),
+                          child:
+                            Stack(
+                              alignment: Alignment.center,
+                              children: [
+                                IconButton(
+                                  icon: Icon(Icons.circle_outlined, size: 64, color: Colors.white),
+                                  onPressed: _captureImage,
+                                ),
+                                IconButton(
+                                  icon: Icon(Icons.camera, size: 48, color: Colors.white),
+                                  onPressed: _captureImage,
+                                ),
+                              ]
+                            ),
+                        ),
                       ),
-                  ),
-                ),
-                Align(
-                  alignment: Alignment.bottomLeft,
-                  child: Padding(
-                    padding: const EdgeInsets.only(bottom: 55),
-                    child:
-                      IconButton(
-                        icon: Icon(Icons.photo_library, size: 36, color: Colors.white),
-                        onPressed: _pickFromGallery,
+                      Align(
+                        alignment: Alignment.bottomLeft,
+                        child: Padding(
+                          padding: const EdgeInsets.only(bottom: 55),
+                          child:
+                            IconButton(
+                              icon: Icon(Icons.photo_library, size: 36, color: Colors.white),
+                              onPressed: _pickFromGallery,
+                            ),
+                        ),
                       ),
-                  ),
-                ),
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Row(
-                      children: [
-                        Icon(Icons.zoom_out), 
-                        Expanded(
-                          child: Slider(
-                            value: _currentZoom, 
-                            min: _minZoom,
-                            max: _maxZoom,
-                            divisions: (_maxZoom - _minZoom).round(),
-                            label: 'Zoom: ${_currentZoom.toStringAsFixed(1)}x',
-                            onChanged: (value) {
-                              setState(() {
-                                _currentZoom = value;
-                                _controller?.setZoomLevel(_currentZoom);
-                              });
-                            },
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Row(
+                            children: [
+                              Icon(Icons.zoom_out), 
+                              Expanded(
+                                child: Slider(
+                                  value: _currentZoom, 
+                                  min: _minZoom,
+                                  max: _maxZoom,
+                                  divisions: (_maxZoom - _minZoom).round(),
+                                  label: 'Zoom: ${_currentZoom.toStringAsFixed(1)}x',
+                                  onChanged: (value) {
+                                    setState(() {
+                                      _currentZoom = value;
+                                      _controller?.setZoomLevel(_currentZoom);
+                                    });
+                                  },
+                                ),
+                              ),
+                              Icon(Icons.zoom_in),
+                            ],
                           ),
                         ),
-                        Icon(Icons.zoom_in),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-              if (_capturedImage != null)
-                Align(
-                  alignment: Alignment.bottomCenter,
-                  child: FilledButton(
-                    onPressed: _cleanupImage,
-                    child: Text('Retake'),
+                      ),
+                    ],
                   ),
                 )
+              else if (_capturedImage != null)
+                Expanded(child: Image.file(File(_capturedImage!.path)))
+              else if (_galleryImage != null)
+                Expanded(child: Image.file(_galleryImage!)),
+              // IMAGE PROCESSING CONTROLS: COMPRESSION, ENCRYPTION, RETAKE
+              if (_capturedImage != null || _galleryImage != null) ...[
+                Column(
+                  children: [
+                    // COMPRESSION QUALITY SLIDER (CONFIGURABLE)
+                    Slider(
+                      value: _compressionQuality,
+                      min: 10,
+                      max: 100,
+                      divisions: 9,
+                      label: 'Quality: ${_compressionQuality.toInt()}',
+                      onChanged: (v) {
+                        setState(() => _compressionQuality = v);
+                      },
+                    ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        // COMPRESS & ENCRYPT BUTTON
+                        FilledButton(
+                          onPressed: _compressAndEncryptImage,
+                          child: Text('Compress & Encrypt'),
+                        ),
+                        // RETAKE/RESET BUTTON
+                        FilledButton(
+                          onPressed: _cleanupImage,
+                          child: Text('Retake'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ],
+              // UPLOAD CONTROLS: ENCRYPTED SIZE, UPLOAD BUTTON
+              if (_encryptedBase64 != null)
+                Column(
+                  children: [
+                    // SHOW ENCRYPTED IMAGE SIZE
+                    Text('Encrypted size: ${_encryptedBase64!.length} bytes'),
+                  ],
+                ),
             ],
           )
       : Center(child: CircularProgressIndicator()),
