@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:camera/camera.dart';
+import 'package:dio/dio.dart';
 import 'package:encrypt/encrypt.dart' as encrypt;
 import 'package:flutter/material.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
@@ -37,6 +39,9 @@ class _SecureCameraAppState extends State<SecureCameraApp> {
 
   // AES Key for demo (in production, use secure key management)
   final _aesKey = encrypt.Key.fromUtf8('my32lengthsupersecretnooneknows1');
+  
+  bool _isUploading = false;
+  double _progress = 0;
 
   @override
   void initState() { 
@@ -210,6 +215,58 @@ class _SecureCameraAppState extends State<SecureCameraApp> {
       _ivBase64 = aesIV.base64;
     });
   }
+
+  Future<void> _uploadImage() async {
+    if (_encryptedBase64 == null || _ivBase64 == null) return;
+    setState(() => _isUploading = true);
+
+    try {
+      final dio = Dio();
+
+      final meta = jsonEncode({
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+        'contentType': 'image/*',
+        'deviceId': 'deviceId',
+        'note': 'processed-preview',
+      });
+
+      final options = Options(
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+      );
+
+      final payload = {
+        'image': _encryptedBase64,
+        'iv': _ivBase64,
+        'meta': meta,
+      };
+
+      final response = await dio.post(
+        'https://your-mls-service/upload',
+        options: options,
+        data: payload,
+        onSendProgress: (sent, total) {
+          if (total > 0) {
+            setState(() => _progress = sent / total);
+          }
+        },
+      );
+
+      if (response.statusCode == 200) {
+        _cleanupImage(); // AUTO DELETE IMAGE AFTER UPLOAD
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Upload successful!')),
+        );
+      } else {
+        throw Exception('Upload failed');
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Upload error: $e')),
+      );
+    } finally {
+      setState(() => _isUploading = false);
+    }
+  }
   
   @override
   Widget build(BuildContext context) {
@@ -338,8 +395,13 @@ class _SecureCameraAppState extends State<SecureCameraApp> {
                   children: [
                     // SHOW ENCRYPTED IMAGE SIZE
                     Text('Encrypted size: ${_encryptedBase64!.length} bytes'),
+                    FilledButton(
+                      onPressed: _isUploading ? null : _uploadImage,
+                      child: _isUploading ? CircularProgressIndicator() : Text('Upload'),
+                    ),
                   ],
                 ),
+                if (_isUploading) LinearProgressIndicator(value: _progress == 0 ? null : _progress),
             ],
           )
       : Center(child: CircularProgressIndicator()),

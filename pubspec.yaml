@@ -18,6 +18,7 @@ dependencies:
   encrypt: ^5.0.3
   light: ^4.1.0
   flutter_windowmanager_plus: ^1.0.1
+  dio: ^5.9.0
 
 dev_dependencies:
   flutter_test:
